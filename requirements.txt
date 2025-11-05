@@ -1,0 +1,6 @@
+lxml==6.0.2
+PyQt6==6.10.0
+PyQt6-Qt6==6.10.0
+PyQt6_sip==13.10.2
+python-docx==1.2.0
+typing_extensions==4.15.0

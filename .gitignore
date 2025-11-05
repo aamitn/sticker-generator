@@ -1,0 +1,53 @@
+# -------------------------------
+# Python & Virtual Environment
+# -------------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+
+# Virtual environment folders
+venv/
+.venv/
+
+# -------------------------------
+# PyInstaller build artifacts
+# -------------------------------
+build/
+dist/
+installer/output/
+*.spec
+
+# -------------------------------
+# Inno Setup Installer Outputs
+# -------------------------------
+installer/output/
+*.iss.tmp
+*.iss.bak
+*.iss.log
+*.exe
+
+# -------------------------------
+# OS / Editor Specific Files
+# -------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# JetBrains / VSCode / Other IDEs
+.idea/
+.vscode/
+*.code-workspace
+
+# -------------------------------
+# App-specific files
+# -------------------------------
+Sticker_Generator_README.md
+README.md
+sticker.png
+icon.ico
