@@ -38,9 +38,11 @@ jobs:
         run: choco install innosetup --no-progress -y
 
       - name: 📦 Build installer (.exe)
+        shell: cmd
         run: |
-          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\iscript.iss
-          copy installer\output\StickerGeneratorSetup.exe dist_release\StickerGeneratorSetup.exe
+          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "installer\iscript.iss"
+          copy "installer\output\StickerGeneratorSetup.exe" "dist_release\StickerGeneratorSetup.exe"
+
 
       - name: 🧾 Determine release tag and name
         id: vars
