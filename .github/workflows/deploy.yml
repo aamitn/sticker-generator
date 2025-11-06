@@ -1,4 +1,5 @@
-name: Build and Release Sticker Generator
+# Author : Bitmuex
+name: Build and Release Sticker Generator 
 
 on:
   push:
