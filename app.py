@@ -14,6 +14,7 @@ from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from datetime import date
 import subprocess , webbrowser, platform
+from pathlib import Path
 
 # ----------------------------------------
 # Global Configuration for Input Limits
@@ -31,6 +32,9 @@ CHARGERS_MIN = 1
 CHARGERS_MAX = 20
 
 JOB_OP_MAX = 999999
+
+DOCS_DIR = Path.home() / "Documents" / "Sticker Generator"
+DOCS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ----------------------------------------
 # Backend logic
@@ -169,7 +173,8 @@ class DocxWorker(QThread):
                     for side in ["FRONT SIDE", "BACK SIDE"]:
                         add_with_progress(doc, side, product_label, customer_name, serial_number, sticker_path)
 
-            output_path = f"Sticker_{customer_name}_{job_no}_{op_no}_{product_type}.docx"
+            filename = f"Sticker_{customer_name}_{job_no}_{op_no}_{product_type}.docx"
+            output_path = str(self.main_window.save_output_path(filename))
             doc.save(output_path)
             self.finished.emit(output_path)
 
@@ -447,17 +452,20 @@ class StickerApp(QMainWindow):
             self.sticker_path.setText(file_path)
 
     def open_output_path(self):
-        output_dir = os.getcwd()
+        """Open the sticker output folder."""
         try:
             if sys.platform.startswith("win"):
-                os.startfile(output_dir)
+                os.startfile(DOCS_DIR)
             elif sys.platform == "darwin":
-                subprocess.run(["open", output_dir])
+                subprocess.run(["open", str(DOCS_DIR)])
             else:
-                subprocess.run(["xdg-open", output_dir])
+                subprocess.run(["xdg-open", str(DOCS_DIR)])
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Could not open output folder:\n{e}")
-
+            
+    def save_output_path(self, filename):
+        return docs_dir / filename
+        
     def open_github_release(self):
         try:
             webbrowser.open("https://github.com/aamitn/sticker-generator/releases")
@@ -465,20 +473,29 @@ class StickerApp(QMainWindow):
             QMessageBox.warning(self, "Error", f"Could not open GitHub releases page:\n{e}")
 
     def purge_all_docx(self):
-        reply = QMessageBox.question(self, "Confirm Delete",
-                                     "Are you sure you want to delete ALL .docx files in the output folder?",
-                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        """Delete all .docx files from the output folder."""
+        reply = QMessageBox.question(
+            self,
+            "Confirm Delete",
+            f"Are you sure you want to delete ALL .docx files in:\n{DOCS_DIR}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
         if reply == QMessageBox.StandardButton.Yes:
             deleted_count = 0
-            for file in os.listdir(os.getcwd()):
-                if file.endswith(".docx"):
-                    try:
-                        os.remove(os.path.join(os.getcwd(), file))
-                        deleted_count += 1
-                    except Exception as e:
-                        QMessageBox.warning(self, "Error", f"Could not delete {file}:\n{e}")
-            QMessageBox.information(self, "Deleted",
-                                    f"Total .docx files deleted: {deleted_count}" if deleted_count else "No .docx files found.")
+            for file in DOCS_DIR.glob("*.docx"):
+                try:
+                    file.unlink()
+                    deleted_count += 1
+                except Exception as e:
+                    QMessageBox.warning(self, "Error", f"Could not delete {file.name}:\n{e}")
+
+            QMessageBox.information(
+                self,
+                "Deleted",
+                f"Total .docx files deleted: {deleted_count}"
+                if deleted_count else "No .docx files found."
+            )
 
     # ---------- DOCX Generation with Progress ----------
     def generate_docx_threaded(self):
@@ -598,6 +615,8 @@ class StickerApp(QMainWindow):
 
         except Exception as e:
             QMessageBox.warning(self, "Print Error", f"Could not print document:\n{e}")
+            
+
 
     def load_settings(self):
         """Restore checkbox states and preferences"""
@@ -615,6 +634,8 @@ class StickerApp(QMainWindow):
         """Save settings before app closes"""
         self.save_settings()
         event.accept()
+        
+        
 
 
 
