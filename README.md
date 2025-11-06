@@ -1,7 +1,7 @@
 # 🏷️ Sticker Generator
 
 A simple **PyQt6 + python-docx** based utility to generate printable **UPS/Battery Charger sticker documents** in `.docx` format with customizable customer name, job number, and product configuration.
-[![Download StickerGeneratorSetup.exe](https://img.shields.io/badge/Download-StickerGeneratorSetup.exe-blue?logo=download&style=for-the-badge)](https://github.com/aamitn/sticker-generator/releases/download/Snapshot/StickerGeneratorSetup.exe)
+[![Download StickerGeneratorSetup.exe](https://img.shields.io/badge/Download-StickerGeneratorSetup.exe-blue?logo=download&style=for-the-badge)](github.com/aamitn/sticker-generator/releases/latest/download/StickerGeneratorSetup.exe)
 
 ---
 
