@@ -3,17 +3,34 @@ import os
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QPushButton,
     QVBoxLayout, QHBoxLayout, QFileDialog, QComboBox, QSpinBox,
-    QMessageBox, QGroupBox, QFormLayout, QMainWindow, QMenuBar, QCheckBox
+    QMessageBox, QGroupBox, QFormLayout, QMainWindow, QMenuBar,
+    QCheckBox, QProgressDialog
 )
-from PyQt6.QtGui import QFont, QIcon, QColor, QPalette, QAction, QTextDocument, QPageSize
+from PyQt6.QtGui import QFont, QIcon, QColor, QPalette, QIntValidator, QAction, QTextDocument, QPageSize
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
-from PyQt6.QtCore import Qt
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-import subprocess
-import platform
+from datetime import date
+import subprocess , webbrowser, platform
 
+# ----------------------------------------
+# Global Configuration for Input Limits
+# ----------------------------------------
+KVA_MIN = 0
+KVA_MAX = 9999
+
+UPS_SETS_MIN = 1
+UPS_SETS_MAX = 20
+
+UPS_PER_SET_MIN = 1
+UPS_PER_SET_MAX = 20
+
+CHARGERS_MIN = 1
+CHARGERS_MAX = 20
+
+JOB_OP_MAX = 999999
 
 # ----------------------------------------
 # Backend logic
@@ -44,15 +61,12 @@ def add_page(doc, side, product_label, customer_name, serial_number, sticker_pat
     # Sticker image
     if os.path.exists(sticker_path):
         doc.add_picture(sticker_path, width=Inches(6.3))
-        last_paragraph = doc.paragraphs[-1]
-        last_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
     else:
-        missing = doc.add_paragraph("[Sticker image missing]")
-        missing.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        
-    #ADD GAP
+        doc.add_paragraph("[Sticker image missing]").alignment = WD_ALIGN_PARAGRAPH.CENTER
+
     doc.add_paragraph("")
-    
+
     # Product name
     p_name_text = f"{product_label} ({customer_name})"
     p_name = doc.add_paragraph(p_name_text)
@@ -64,78 +78,120 @@ def add_page(doc, side, product_label, customer_name, serial_number, sticker_pat
     fit_text_to_line(run_name, p_name_text, base_font_size=23)
 
     # Serial number
-    p_serial_text = serial_number
-    p_serial = doc.add_paragraph(p_serial_text)
+    p_serial = doc.add_paragraph(serial_number)
     p_serial.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run_serial = p_serial.runs[0]
     run_serial.font.name = "Calibri"
     run_serial.font.bold = True
     run_serial.font.color.rgb = RGBColor(0, 0, 0)
-    fit_text_to_line(run_serial, p_serial_text, base_font_size=23)
+    fit_text_to_line(run_serial, serial_number, base_font_size=23)
 
 
-def generate_docx(sticker_path, customer_name, job_number, op_number, product_type,
-                  kva_rating=None, num_ups=None,
-                  voltage=None, current=None, battery_capacity=None,
-                  charger_type=None, battery_type=None, num_chargers=None,
-                  start_index=1):
-    """Generate DOCX for UPS or Battery Charger."""
-    doc = Document()
-    product_type = product_type.upper().strip()
-    customer_name = customer_name.upper().strip()
+# ----------------------------------------
+# Worker Thread for DOCX Generation
+# ----------------------------------------
+class DocxWorker(QThread):
+    progress = pyqtSignal(int)      # emit progress percentage
+    finished = pyqtSignal(str)      # emit final file path
+    error = pyqtSignal(str)         # emit error message
 
-    if product_type == "UPS":
-        ups_list = [f"UPS{i + 1}" for i in range(num_ups)]
-        if num_ups > 1:
-            ups_list.append("BYPASS")
+    def __init__(self, main_window, **kwargs):
+        super().__init__()
+        self.main_window = main_window   # ✅ store main window reference
+        self.kwargs = kwargs
 
-        for unit in ups_list:
-            product_label = f"{kva_rating}kVA {unit}"
-            if unit == "BYPASS":
-                serial_number = f"(SL. NO. : LL/25-26/{job_number}-OP{op_number}/BYP)"
+    def run(self):
+        try:
+            product_type = self.kwargs.get("product_type").upper().strip()
+            customer_name = self.kwargs.get("customer_name").upper().strip()
+            sticker_path = self.kwargs.get("sticker_path")
+            job_no = self.kwargs.get("job_no")
+            op_no = self.kwargs.get("op_no")
+            start_index = self.kwargs.get("start_index", 1)
+
+            doc = Document()
+            
+            # ---------- Use Fiscal Year in serial_number ----------
+            if self.main_window.override_fy_cb.isChecked():
+                fy_str = self.main_window.fy_dropdown.currentText()
+                fy_input_year = 2000 + int(fy_str.split('-')[0])  # convert '25-26' → 2025
+                fy = self.main_window.get_financial_year_from_year(fy_input_year)
             else:
-                serial_number = f"(SL. NO. : LL/25-26/{job_number}-OP{op_number}/{unit})"
+                fy = self.main_window.get_current_financial_year()
 
-            for side in ["FRONT SIDE", "BACK SIDE"]:
-                add_page(doc, side, product_label, customer_name, serial_number, sticker_path)
 
-    elif product_type in ["BATTERY CHARGER", "CHARGER", "BCH"]:
-        start = 0 if start_index == 0 else 1
-        end = num_chargers + start
-        for i in range(start, end):
-            index_label = "" if i == 0 else str(i)
-            product_label = f"{voltage}V/{current}A {charger_type} for {battery_capacity}Ah {battery_type} battery"
-            serial_number = f"(SL. NO. : LL/25-26/{job_number}-OP{op_number}/BCH{index_label})"
+            # Determine total pages for progress tracking
+            total_pages = 0
+            if product_type == "UPS":
+                num_sets = self.kwargs.get("num_sets", 1)
+                ups_per_set = self.kwargs.get("ups_per_set", 1)
+                total_pages = num_sets * (ups_per_set + 1) * 2  # +1 for BYPASS, 2 sides
+            else:
+                num_chargers = self.kwargs.get("num_chargers", 1)
+                total_pages = num_chargers * 2
 
-            for side in ["FRONT SIDE", "BACK SIDE"]:
-                add_page(doc, side, product_label, customer_name, serial_number, sticker_path)
+            current_page = 0
 
-    else:
-        raise ValueError("Invalid product type.")
+            def add_with_progress(*args, **kwargs):
+                nonlocal current_page
+                add_page(*args, **kwargs)
+                current_page += 1
+                percent = int((current_page / total_pages) * 100)
+                self.progress.emit(percent)
 
-    output_path = f"Sticker_{customer_name}_{job_number}_{op_number}_{product_type}.docx"
-    doc.save(output_path)
-    return output_path
+            if product_type == "UPS":
+                num_sets = self.kwargs.get("num_sets", 1)
+                ups_per_set = self.kwargs.get("ups_per_set", 1)
+                kva_rating = self.kwargs.get("kva_rating")
+                for set_idx in range(1, num_sets + 1):
+                    ups_list = [f"UPS{i + 1}" for i in range(ups_per_set)]
+                    if ups_per_set > 1:
+                        ups_list.append("BYPASS")
+
+                    for unit in ups_list:
+                        product_label = f"{kva_rating}kVA {unit}"
+                        serial_number = f"(SL. NO. : LL/{fy}/{job_no}-OP{op_no}/BYP)" if unit == "BYPASS" else f"(SL. NO. : LL/{fy}/{job_no}-OP{op_no}/{unit})"
+                        for side in ["FRONT SIDE", "BACK SIDE"]:
+                            add_with_progress(doc, side, product_label, customer_name, serial_number, sticker_path)
+
+            else:
+                start = 0 if start_index == 0 else 1
+                num_chargers = self.kwargs.get("num_chargers", 1)
+                voltage = self.kwargs.get("voltage")
+                current = self.kwargs.get("current")
+                battery_capacity = self.kwargs.get("battery_capacity")
+                charger_type = self.kwargs.get("charger_type")
+                battery_type = self.kwargs.get("battery_type")
+                for i in range(start, num_chargers + start):
+                    index_label = "" if i == 0 else str(i)
+                    product_label = f"{voltage}V/{current}A {charger_type} for {battery_capacity}Ah {battery_type} battery"
+                    serial_number = f"(SL. NO. : LL/{fy}/{job_no}-OP{op_no}/BCH{index_label})"
+                    for side in ["FRONT SIDE", "BACK SIDE"]:
+                        add_with_progress(doc, side, product_label, customer_name, serial_number, sticker_path)
+
+            output_path = f"Sticker_{customer_name}_{job_no}_{op_no}_{product_type}.docx"
+            doc.save(output_path)
+            self.finished.emit(output_path)
+
+        except Exception as e:
+            self.error.emit(str(e))
 
 
 # ----------------------------------------
 # GUI Main Window
 # ----------------------------------------
-
 class StickerApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Sticker Generator – Bitmutex Tools")
+        self.setWindowTitle("Sticker Generator Tool")
         self.setWindowIcon(QIcon.fromTheme("document-new"))
         self.setFixedWidth(480)
-
-        # Default setting
         self.start_index = 1
+
         self.init_ui()
         self.apply_adaptive_theme()
         self.auto_load_sticker()
 
-    # ---------- Theme Handling ----------
     def apply_adaptive_theme(self):
         app_palette = QApplication.instance().palette()
         base_color = app_palette.color(QPalette.ColorRole.Window)
@@ -155,57 +211,102 @@ class StickerApp(QMainWindow):
             palette.setColor(QPalette.ColorRole.Text, Qt.GlobalColor.black)
             palette.setColor(QPalette.ColorRole.Button, QColor("#2F80ED"))
             palette.setColor(QPalette.ColorRole.ButtonText, Qt.GlobalColor.white)
-
         QApplication.instance().setPalette(palette)
         self.setPalette(palette)
         self.setFont(QFont("Segoe UI", 10))
 
-    # ---------- Auto Load Sticker ----------
     def auto_load_sticker(self):
         default_img = os.path.join(os.getcwd(), "sticker.png")
         if os.path.exists(default_img):
             self.sticker_path.setText(default_img)
 
-    # ---------- UI ----------
     def init_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout()
         main_layout.setSpacing(15)
 
-        # Menu bar
+        # Menu Bar
         menu_bar = QMenuBar(self)
         self.setMenuBar(menu_bar)
 
+        # Settings
         settings_menu = menu_bar.addMenu("Settings")
         self.start_0_action = QAction("Start BCH numbering from 0", self, checkable=True)
         self.start_0_action.triggered.connect(self.toggle_start_index)
         settings_menu.addAction(self.start_0_action)
-        
-        # Use Default Printer setting
         self.use_default_printer_action = QAction("Use Default Printer", self, checkable=True)
         settings_menu.addAction(self.use_default_printer_action)
 
+        # Edit Menu
+        edit_menu = menu_bar.addMenu("Edit")
+        open_output_action = QAction("Open Output Path", self)
+        open_output_action.triggered.connect(self.open_output_path)
+        edit_menu.addAction(open_output_action)
+        purge_all_action = QAction("Purge All DOCX", self)
+        purge_all_action.triggered.connect(self.purge_all_docx)
+        edit_menu.addAction(purge_all_action)
+
+        # Help Menu
         about_menu = menu_bar.addMenu("Help")
         about_action = QAction("About", self)
         about_action.triggered.connect(self.show_about)
         about_menu.addAction(about_action)
+        update_action = QAction("Check for Update", self)
+        update_action.triggered.connect(self.open_github_release)
+        about_menu.addAction(update_action)
+        
+        # Fiscal Year Override
+        fy_box = QGroupBox("Fiscal Year")
+        fy_layout = QHBoxLayout()
+        self.override_fy_cb = QCheckBox("Override Fiscal Year")
 
-        # ---- Customer Info ----
-        customer_box = QGroupBox("Customer & Job Details")
+        self.fy_dropdown = QComboBox()
+        # Populate FY dropdown ±20 years from current FY
+        current_year = date.today().year
+        fy_list = []
+
+        # FY Dropdown Range
+        for y in range(current_year - 20, current_year + 21):
+            start = y % 100
+            end = (y + 1) % 100
+            fy_list.append(f"{start:02d}-{end:02d}")
+
+        self.fy_dropdown.addItems(fy_list)
+
+        # Default state
+        self.fy_dropdown.setEnabled(self.override_fy_cb.isChecked())
+
+        # 🔹 This line makes the dropdown responsive to the checkbox
+        self.override_fy_cb.toggled.connect(self.fy_dropdown.setEnabled)
+
+        # Optional: set default selection to current FY
+        current_fy = self.get_current_financial_year()
+        index = fy_list.index(current_fy)
+        self.fy_dropdown.setCurrentIndex(index)
+
+        fy_layout.addWidget(self.override_fy_cb)
+        fy_layout.addWidget(self.fy_dropdown)
+        fy_box.setLayout(fy_layout)
+        
+
+        # Customer & Job Details
+        customer_box = QGroupBox("Customer && Job Details")
         form1 = QFormLayout()
         self.customer_input = QLineEdit()
         self.job_input = QLineEdit()
+        self.job_input.setValidator(QIntValidator(0, JOB_OP_MAX))  
         self.op_input = QLineEdit()
         self.product_type = QComboBox()
         self.product_type.addItems(["UPS", "Battery Charger"])
         form1.addRow("Customer Name:", self.customer_input)
         form1.addRow("Job Number:", self.job_input)
         form1.addRow("OP Number:", self.op_input)
+        self.op_input.setValidator(QIntValidator(0, JOB_OP_MAX))  
         form1.addRow("Product Type:", self.product_type)
         customer_box.setLayout(form1)
 
-        # ---- Sticker Selection ----
+        # Sticker Selection
         sticker_box = QGroupBox("Sticker Image")
         hbox = QHBoxLayout()
         self.sticker_path = QLineEdit()
@@ -215,29 +316,36 @@ class StickerApp(QMainWindow):
         hbox.addWidget(browse_btn)
         sticker_box.setLayout(hbox)
 
-        # ---- UPS Fields ----
+        # UPS Fields
         ups_box = QGroupBox("UPS Configuration")
         ups_form = QFormLayout()
-        self.ups_number = QSpinBox()
-        self.ups_number.setRange(1, 10)
+        self.num_sets = QSpinBox()
+        self.num_sets.setRange(UPS_SETS_MIN, UPS_SETS_MAX)
+        self.ups_per_set = QSpinBox()
+        self.ups_per_set.setRange(UPS_PER_SET_MIN, UPS_PER_SET_MAX)
         self.kva_rating = QLineEdit()
+        self.kva_rating.setValidator(QIntValidator(KVA_MIN, KVA_MAX))
         self.kva_rating.setPlaceholderText("e.g. 30 (do not add kVA)")
-        ups_form.addRow("Number of UPS:", self.ups_number)
+        ups_form.addRow("Number of Sets:", self.num_sets)
+        ups_form.addRow("UPS per Set:", self.ups_per_set)
         ups_form.addRow("Power Rating (kVA):", self.kva_rating)
         ups_box.setLayout(ups_form)
 
-        # ---- Battery Charger Fields ----
+        # Battery Charger Fields
         charger_box = QGroupBox("Battery Charger Configuration")
         ch_form = QFormLayout()
         self.voltage = QLineEdit()
+        self.voltage.setValidator(QIntValidator(1, 1000))
         self.current = QLineEdit()
+        self.current.setValidator(QIntValidator(1, 500))
         self.battery_capacity = QLineEdit()
+        self.battery_capacity.setValidator(QIntValidator(1, 5000))
         self.charger_type = QComboBox()
         self.charger_type.addItems(["FC", "FCB", "FCBC", "DFCBC"])
         self.battery_type = QComboBox()
         self.battery_type.addItems(["VRLA", "NICAD"])
         self.num_chargers = QSpinBox()
-        self.num_chargers.setRange(1, 10)
+        self.num_chargers.setRange(CHARGERS_MIN, CHARGERS_MAX)
         ch_form.addRow("Charger Voltage (V):", self.voltage)
         ch_form.addRow("Charger Current (A):", self.current)
         ch_form.addRow("Battery Capacity (Ah):", self.battery_capacity)
@@ -246,18 +354,24 @@ class StickerApp(QMainWindow):
         ch_form.addRow("Number of Chargers:", self.num_chargers)
         charger_box.setLayout(ch_form)
 
-        # ---- Options ----
+        # Options
         options_box = QGroupBox("Post Creation Options")
         opt_layout = QVBoxLayout()
+
         self.auto_open_cb = QCheckBox("Auto-open file after creation")
+        self.auto_open_cb.setChecked(False)  
+
         self.auto_print_cb = QCheckBox("Auto-print file after creation (default printer, A4)")
+        self.auto_print_cb.setChecked(True)  
+
         opt_layout.addWidget(self.auto_open_cb)
         opt_layout.addWidget(self.auto_print_cb)
         options_box.setLayout(opt_layout)
 
-        # ---- Generate Button ----
+
+        # Generate Button
         generate_btn = QPushButton("Generate DOCX")
-        generate_btn.clicked.connect(self.generate_docx)
+        generate_btn.clicked.connect(self.generate_docx_threaded)
         generate_btn.setStyleSheet("""
             QPushButton {
                 background-color: #2f80ed;
@@ -270,14 +384,14 @@ class StickerApp(QMainWindow):
                 background-color: #1e6cd4;
             }
         """)
-
+        
+        main_layout.addWidget(fy_box)
         main_layout.addWidget(customer_box)
         main_layout.addWidget(sticker_box)
         main_layout.addWidget(ups_box)
         main_layout.addWidget(charger_box)
         main_layout.addWidget(options_box)
         main_layout.addWidget(generate_btn)
-
         central_widget.setLayout(main_layout)
         self.product_type.currentTextChanged.connect(self.update_visibility)
         self.update_visibility()
@@ -287,15 +401,31 @@ class StickerApp(QMainWindow):
         self.start_index = 0 if checked else 1
 
     def show_about(self):
-        QMessageBox.information(
-            self,
-            "About",
-            "Sticker Generator Tool\n"
-            "Version: 0.4\n\n"
-            "Developed by Bitmutex Technologies\n"
-            "Author: Amit Kumar Nandi\n"
-            "Website: https://bitmutex.com"
+        about_text = (
+            "<div style='font-family:Segoe UI; font-size:10pt; color:#333;'>"
+            "<h2 style='color:#2F80ED; margin-bottom:4px;'>Sticker Generator Tool</h2>"
+            "<p style='margin:2px 0 8px 0;'>Version: <b>0.4</b></p>"
+            "<hr style='border:none; border-top:1px solid #ccc; margin:8px 0;'>"
+            "<p style='margin:4px 0;'>Developed by <b>Bitmutex Technologies</b></p>"
+            "<p style='margin:4px 0;'>Author: <b>Amit Kumar Nandi</b></p>"
+            "<p style='margin:6px 0;'>"
+            "For updates, documentation, and releases, visit:<br>"
+            "<a href='https://bitmutex.com' style='color:#2F80ED; text-decoration:none;'>"
+            "https://bitmutex.com</a>"
+            "</p>"
+            "<hr style='border:none; border-top:1px solid #ccc; margin:8px 0;'>"
+            "<p style='font-size:9pt; color:#777;'>© 2025 Bitmutex Technologies. All rights reserved.</p>"
+            "</div>"
         )
+
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("About – Sticker Generator")
+        msg_box.setTextFormat(Qt.TextFormat.RichText)
+        msg_box.setIcon(QMessageBox.Icon.Information)
+        msg_box.setText(about_text)
+        msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        msg_box.exec()
+
 
     def update_visibility(self):
         is_ups = self.product_type.currentText() == "UPS"
@@ -310,7 +440,42 @@ class StickerApp(QMainWindow):
         if file_path:
             self.sticker_path.setText(file_path)
 
-    def generate_docx(self):
+    def open_output_path(self):
+        output_dir = os.getcwd()
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(output_dir)
+            elif sys.platform == "darwin":
+                subprocess.run(["open", output_dir])
+            else:
+                subprocess.run(["xdg-open", output_dir])
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Could not open output folder:\n{e}")
+
+    def open_github_release(self):
+        try:
+            webbrowser.open("https://github.com/aamitn/sticker-generator/releases")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Could not open GitHub releases page:\n{e}")
+
+    def purge_all_docx(self):
+        reply = QMessageBox.question(self, "Confirm Delete",
+                                     "Are you sure you want to delete ALL .docx files in the output folder?",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            deleted_count = 0
+            for file in os.listdir(os.getcwd()):
+                if file.endswith(".docx"):
+                    try:
+                        os.remove(os.path.join(os.getcwd(), file))
+                        deleted_count += 1
+                    except Exception as e:
+                        QMessageBox.warning(self, "Error", f"Could not delete {file}:\n{e}")
+            QMessageBox.information(self, "Deleted",
+                                    f"Total .docx files deleted: {deleted_count}" if deleted_count else "No .docx files found.")
+
+    # ---------- DOCX Generation with Progress ----------
+    def generate_docx_threaded(self):
         try:
             product_type = self.product_type.currentText()
             sticker_path = self.sticker_path.text().strip()
@@ -321,68 +486,119 @@ class StickerApp(QMainWindow):
             if not all([sticker_path, customer_name, job_no, op_no]):
                 raise ValueError("Please fill all required fields and select a sticker image.")
 
+            kwargs = dict(
+                product_type=product_type,
+                sticker_path=sticker_path,
+                customer_name=customer_name,
+                job_no=job_no,
+                op_no=op_no,
+                start_index=self.start_index,
+            )
+
             if product_type == "UPS":
-                kva = self.kva_rating.text().strip()
-                num = self.ups_number.value()
-                output = generate_docx(sticker_path, customer_name, job_no, op_no, product_type,
-                                       kva_rating=kva, num_ups=num)
+                kva = int(self.kva_rating.text().strip())
+                if not (KVA_MIN <= kva <= KVA_MAX):
+                    raise ValueError(f"KVA rating must be between {KVA_MIN} and {KVA_MAX}")
+                kwargs.update(
+                    kva_rating=kva,
+                    num_sets=self.num_sets.value(),
+                    ups_per_set=self.ups_per_set.value()
+                )
             else:
-                output = generate_docx(sticker_path, customer_name, job_no, op_no, product_type,
-                                       voltage=self.voltage.text().strip(),
-                                       current=self.current.text().strip(),
-                                       battery_capacity=self.battery_capacity.text().strip(),
-                                       charger_type=self.charger_type.currentText(),
-                                       battery_type=self.battery_type.currentText(),
-                                       num_chargers=self.num_chargers.value(),
-                                       start_index=self.start_index)
+                kwargs.update(
+                    voltage=self.voltage.text().strip(),
+                    current=self.current.text().strip(),
+                    battery_capacity=self.battery_capacity.text().strip(),
+                    charger_type=self.charger_type.currentText(),
+                    battery_type=self.battery_type.currentText(),
+                    num_chargers=self.num_chargers.value()
+                )
 
-            QMessageBox.information(self, "✅ Success", f"Document generated successfully:\n{output}")
+            self.progress_dialog = QProgressDialog("Generating DOCX...", "Cancel", 0, 100, self)
+            self.progress_dialog.setWindowTitle("Please Wait")
+            self.progress_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+            self.progress_dialog.setMinimumDuration(0)
+            self.progress_dialog.show()
 
-            # --- Auto actions ---
-            if self.auto_open_cb.isChecked():
-                os.startfile(output)
-
-
-            if self.auto_print_cb.isChecked():
-                try:
-                    use_default_printer = self.use_default_printer_action.isChecked()
-
-                    if use_default_printer:
-                        # Direct print using default printer (no dialog)
-                        if sys.platform.startswith("win"):
-                            os.startfile(output, "print")
-                        elif sys.platform == "darwin":
-                            subprocess.run(["lp", output])
-                        else:
-                            subprocess.run(["lp", output])
-                    else:
-                        # Show print dialog for manual printer selection
-                        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-                        printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
-                        dialog = QPrintDialog(printer, self)
-                        dialog.setWindowTitle("Select Printer to Print Sticker")
-
-                        if dialog.exec():
-                            if sys.platform.startswith("win"):
-                                os.startfile(output, "print")
-                            elif sys.platform == "darwin":
-                                subprocess.run(["open", "-a", "Preview", output])
-                            else:
-                                subprocess.run(["xdg-open", output])
-
-                except Exception as e:
-                    QMessageBox.warning(self, "Print Error", f"Could not print automatically:\n{e}")
-
-
+            self.worker = DocxWorker(self, **kwargs)
+            self.worker.progress.connect(self.progress_dialog.setValue)
+            self.worker.finished.connect(self.on_generation_finished)
+            self.worker.error.connect(lambda e: QMessageBox.critical(self, "❌ Error", e))
+            self.worker.start()
 
         except Exception as e:
             QMessageBox.critical(self, "❌ Error", str(e))
+
+    def on_generation_finished(self, output):
+        self.progress_dialog.close()
+        QMessageBox.information(self, "✅ Success", f"Document generated successfully:\n{output}")
+        if self.auto_open_cb.isChecked():
+            os.startfile(output)
+        if self.auto_print_cb.isChecked():
+            try:
+                use_default_printer = self.use_default_printer_action.isChecked()
+                current_platform = platform.system().lower()
+
+                if use_default_printer:
+                    # Auto print
+                    if current_platform.startswith("windows"):
+                        os.startfile(output, "print")
+                    elif current_platform.startswith(("linux", "darwin")):
+                        subprocess.run(["lp", output])
+                    else:
+                        QMessageBox.information(self, "Info", f"Automatic printing not supported on {current_platform.title()} yet.")
+                else:
+                    self.print_docx_via_dialog(output)
+            except Exception as e:
+                QMessageBox.warning(self, "Print Error", f"Could not print automatically:\n{e}")
+
+    # ---------- Helper Functions ----------
+    def get_financial_year_from_year(self, year: int) -> str:
+        """Convert a given year to FY string 'YY-YY' format (April-March)."""
+        start = year % 100
+        end = (year + 1) % 100
+        return f"{start:02d}-{end:02d}"
+
+    def get_current_financial_year(self) -> str:
+        """Calculate current FY based on today's date."""
+        today = date.today()
+        year = today.year
+        month = today.month
+        if month >= 4:
+            fy_start = year
+        else:
+            fy_start = year - 1
+        return self.get_financial_year_from_year(fy_start)
+
+
+    def print_docx_via_dialog(self, docx_path):
+        """Show print dialog and print DOCX content via system application."""
+        try:
+            # Initialize printer and dialog - simplified version
+            printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+            printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+            
+            dialog = QPrintDialog(printer, self)
+            dialog.setWindowTitle("Select Printer to Print Sticker")
+
+            if dialog.exec():
+                # User confirmed - print using system default application
+                if sys.platform.startswith("win"):
+                    os.startfile(docx_path, "print")
+                elif sys.platform == "darwin":
+                    subprocess.run(["open", "-a", "Preview", docx_path])
+                else:
+                    subprocess.run(["xdg-open", docx_path])
+
+        except Exception as e:
+            QMessageBox.warning(self, "Print Error", f"Could not print document:\n{e}")
+
+
 
 
 # ----------------------------------------
 # Entry Point
 # ----------------------------------------
-
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = StickerApp()
