@@ -1,0 +1,68 @@
+name: Build and Release Sticker Generator
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - '*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: 🧩 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller python-docx PyQt6
+
+      - name: 🏗️ Build standalone executable
+        run: |
+          pyinstaller app.py --name app --onefile --windowed --icon=icon.ico
+          mkdir dist_release
+          copy dist\app.exe dist_release\app.exe
+          copy sticker.png dist_release\sticker.png
+          copy icon.ico dist_release\icon.ico
+
+      - name: 🧰 Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: 📦 Build installer (.exe)
+        run: |
+          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\iscript.iss
+          copy installer\output\StickerGeneratorSetup.exe dist_release\StickerGeneratorSetup.exe
+
+      - name: 🧾 Determine release tag and name
+        id: vars
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="Snapshot"
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "release_name=Sticker Generator - $TAG" >> $GITHUB_OUTPUT
+
+      - name: 🚀 Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.tag }}
+          name: ${{ steps.vars.outputs.release_name }}
+          draft: false
+          prerelease: ${{ steps.vars.outputs.tag == 'Snapshot' }}
+          files: |
+            dist_release/app.exe
+            dist_release/StickerGeneratorSetup.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
