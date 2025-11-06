@@ -34,7 +34,6 @@ CHARGERS_MAX = 20
 JOB_OP_MAX = 999999
 
 DOCS_DIR = Path.home() / "Documents" / "Sticker Generator"
-DOCS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ----------------------------------------
 # Backend logic
@@ -464,7 +463,8 @@ class StickerApp(QMainWindow):
             QMessageBox.warning(self, "Error", f"Could not open output folder:\n{e}")
             
     def save_output_path(self, filename):
-        return docs_dir / filename
+        DOCS_DIR.mkdir(parents=True, exist_ok=True)
+        return DOCS_DIR / filename
         
     def open_github_release(self):
         try:
