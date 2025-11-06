@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QCheckBox, QProgressDialog
 )
 from PyQt6.QtGui import QFont, QIcon, QColor, QPalette, QIntValidator, QAction, QTextDocument, QPageSize
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings
 from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
@@ -191,6 +191,12 @@ class StickerApp(QMainWindow):
         self.init_ui()
         self.apply_adaptive_theme()
         self.auto_load_sticker()
+        
+        # ----------------------------------------
+        # Persisted Settings
+        # ----------------------------------------
+        self.settings = QSettings("Bitmutex", "StickerGenerator")
+        self.load_settings()
 
     def apply_adaptive_theme(self):
         app_palette = QApplication.instance().palette()
@@ -593,6 +599,22 @@ class StickerApp(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "Print Error", f"Could not print document:\n{e}")
 
+    def load_settings(self):
+        """Restore checkbox states and preferences"""
+        self.auto_open_cb.setChecked(self.settings.value("auto_open", True, bool))
+        self.auto_print_cb.setChecked(self.settings.value("auto_print", True, bool))
+        self.use_default_printer_action.setChecked(self.settings.value("use_default_printer", True, bool))
+
+    def save_settings(self):
+        """Save checkbox states and preferences"""
+        self.settings.setValue("auto_open", self.auto_open_cb.isChecked())
+        self.settings.setValue("auto_print", self.auto_print_cb.isChecked())
+        self.settings.setValue("use_default_printer", self.use_default_printer_action.isChecked())
+        
+    def closeEvent(self, event):
+        """Save settings before app closes"""
+        self.save_settings()
+        event.accept()
 
 
 
