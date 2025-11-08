@@ -351,9 +351,9 @@ class StickerApp(QMainWindow):
         self.battery_capacity = QLineEdit()
         self.battery_capacity.setValidator(QIntValidator(1, 5000))
         self.charger_type = QComboBox()
-        self.charger_type.addItems(["FC", "FCB", "FCBC", "DFCBC"])
+        self.charger_type.addItems(["FC", "FC & FCB", "FCBC", "DFCBC"])
         self.battery_type = QComboBox()
-        self.battery_type.addItems(["VRLA", "NICAD"])
+        self.battery_type.addItems(["VRLA", "NICAD", "Planté", "Tubular", "Li-Ion", "Li-Po"])
         self.num_chargers = QSpinBox()
         self.num_chargers.setRange(CHARGERS_MIN, CHARGERS_MAX)
         ch_form.addRow("Charger Voltage (V):", self.voltage)
@@ -615,9 +615,8 @@ class StickerApp(QMainWindow):
 
         except Exception as e:
             QMessageBox.warning(self, "Print Error", f"Could not print document:\n{e}")
-            
-
-
+    
+    # ---------- Settings Persistence ----------
     def load_settings(self):
         """Restore checkbox states and preferences"""
         self.auto_open_cb.setChecked(self.settings.value("auto_open", True, bool))
@@ -635,9 +634,6 @@ class StickerApp(QMainWindow):
         self.save_settings()
         event.accept()
         
-        
-
-
 
 # ----------------------------------------
 # Entry Point
