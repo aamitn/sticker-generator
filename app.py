@@ -1,3 +1,11 @@
+# ----------------------------------------
+# Front & Back Sticker Generator App
+# Org : Bitmuex Technoloies
+# Author : Amit Kumar Nandi
+# Version : v0.15
+# License : MIT
+# **(©) 2025 Bitmutex Technologies. All rights reserved.**
+# ----------------------------------------
 import sys
 import os
 from PyQt6.QtWidgets import (
