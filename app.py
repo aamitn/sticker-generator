@@ -28,7 +28,7 @@ from pathlib import Path
 # Global Configuration for Input Limits
 # ----------------------------------------
 KVA_MIN = 0
-KVA_MAX = 9999
+KVA_MAX = 99999
 
 UPS_SETS_MIN = 1
 UPS_SETS_MAX = 20
