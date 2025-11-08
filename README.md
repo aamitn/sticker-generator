@@ -11,7 +11,7 @@ Easily customize **customer details**, **job numbers**, and **product configurat
 
 ## 🚀 Features
 
-- Generate front and back pages with large white headings.  
+- Generate front and back page sticker for UPS and Chargers.  
 - Automatically inserts and scales the sticker image.  
 - Dynamically adjusts text size to fit a single line.  
 - Options to auto-open and auto-print after generation.  
