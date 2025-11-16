@@ -8,7 +8,7 @@
 # **(©) 2025 Bitmutex Technologies. All rights reserved.**
 # ----------------------------------------
 """
-Professional sticker generator application for UPS and Battery Charger products.
+Sticker generator application for UPS and Battery Charger products.
 Generates front and back stickers with customizable product details and serial numbers.
 """
 
